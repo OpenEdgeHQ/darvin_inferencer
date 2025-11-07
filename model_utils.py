@@ -15,6 +15,7 @@ import zipfile
 from typing import Optional, Tuple
 from urllib import error, request
 
+import requests
 from eth_account import Account
 from eth_account.messages import encode_defunct
 
@@ -180,8 +181,6 @@ def download_model(
         Path to extracted model directory, or None if download failed
     """
     try:
-        import requests
-        
         # 1. Check if model already cached
         if cache_dir is None:
             cache_dir = os.path.join(tempfile.gettempdir(), "darvin_models")
@@ -214,7 +213,7 @@ def download_model(
             download_url,
             params={'cid': model_cid},
             headers=headers,
-            timeout=300  # 5 minutes timeout
+            timeout=60 * 20  # 20 minutes timeout
         )
         
         if response.status_code != 200:

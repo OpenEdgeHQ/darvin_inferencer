@@ -1,137 +1,131 @@
 # Darvin Inferencer
 
-Automated inference worker that monitors and processes blockchain orders.
+Automated inference worker that monitors and processes blockchain inference orders.
 
 ## Quick Start
 
-### 1. Install
-
+### 1. Install Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-### 2. Set Private Key
-
+### 2. Set Environment Variables
 ```bash
-export INFERENCER_PRIVATE_KEY="your_private_key_here"
+export INFERENCER_PRIVATE_KEY="your_private_key"
+export MODEL_ID="1"
+export MODEL_CID="QmYourModelCID"
+export PRICE="0.001"
 ```
 
 ### 3. Run Worker
-
 ```bash
-python inferencer_worker.py \
-  --model-id 1 \
-  --model-cid QmExample123... \
-  --price 0.001
+python inferencer_worker.py
 ```
 
-**That's it!** The worker will:
-- ✅ Auto-register your node (if not registered)
-- ✅ Auto-register your service (if not registered)
-- ✅ Start monitoring and processing orders
-
-## Parameters
-
-| Parameter | Required | Description | Example |
-|-----------|----------|-------------|---------|
-| `--model-id` | Yes | Model ID from whitelist | `1` |
-| `--model-cid` | Yes | IPFS CID for model download | `QmAbc...` |
-| `--price` | Yes | Price per call in tokens | `0.001` |
-| `--interval` | No | Polling interval in seconds (default: 3) | `5` |
+The worker will automatically:
+- ✅ Register node (first run)
+- ✅ Register service (first run)
+- ✅ Download and cache model
+- ✅ Monitor and process orders
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `INFERENCER_PRIVATE_KEY` | ✅ Yes | - | Your wallet private key |
+| `INFERENCER_PRIVATE_KEY` | ✅ | - | Wallet private key |
+| `MODEL_ID` | ✅ | - | Trained model ID |
+| `MODEL_CID` | ✅ | - | IPFS CID for trained model to download |
+| `PRICE` | ✅ | - | Price per call in tokens |
+| `SYSTEM_PROMPT` | ❌ | Translation assistant | System prompt for the model |
+
+### System Prompt Examples
+
+**Translation (default):**
+```bash
+export SYSTEM_PROMPT="You are a helpful assistant that translates English text to Chinese."
+```
+
+**Note:** User input from blockchain orders will be sent as the user message. The model will respond based on the system prompt.
 
 ## How It Works
 
-1. **First Run**: Automatically registers node + service with default settings
-2. **Subsequent Runs**: Detects existing registration and starts monitoring
-3. **Order Processing**: Polls for new orders and fulfills them automatically
-4. **Error Handling**: Failed orders retry in next polling cycle
-
-## Customization
-
-### Change Model Processing
-
-Edit `process_new_orders()` function in `inferencer_worker.py`:
-
-```python
-# Current: Echo mode (line ~341)
-result_bytes = order.inputs
-
-# Replace with your inference logic:
-result_bytes = run_model_inference(model_cid, order.inputs)
+```
+1. Start Worker
+   ↓
+2. Check node registration → Auto-register if needed
+   ↓
+3. Check service registration → Auto-register if needed
+   ↓
+4. Download model → Auto-cached by CID
+   ↓
+5. Poll for orders → Check every N seconds
+   ↓
+6. Process orders → Run inference → Submit results
+   ↓
+7. Repeat from step 5
 ```
 
-### Change Device Description
+## Testing
 
-Edit `DEFAULT_DEVICE_DESCRIPTION` constant (line ~47):
-
+### Manual Inference Test
 ```python
-DEFAULT_DEVICE_DESCRIPTION = "Your Custom Description"
+from model_utils import download_model
+from inference import ModelInference
+
+# Download model
+model_dir = download_model(
+    model_cid="QmYourCID",
+    private_key="0x...",
+    api_server_url="https://darvin-backend-test.gradient.network"
+)
+
+# Initialize with system prompt
+inference = ModelInference(
+    model_path=model_dir,
+    system_prompt="You are a helpful assistant that translates English text to Chinese."
+)
+
+# Run inference (input will be sent as user message)
+result = inference.generate("hello")
+print(result)  # Output: "你好"
 ```
+
+## Model Caching
+
+Models are automatically cached at `/tmp/darvin_models/{CID}/`:
+- **First download:** Authenticate → Download → Extract → Cache
+- **Subsequent runs:** Use cached model directly
 
 ## Troubleshooting
 
-**Connection Error**
-- Check `RPC_URL` is accessible
-- Verify network connectivity
+**Q: How to confirm service is registered?**  
+A: Check logs for `Service registered: Service ID xxx`
 
-**Registration Failed**
-- Ensure wallet has sufficient balance for gas + stake
-- Verify `model-id` exists in whitelist (contact admin)
+**Q: Orders not processing?**  
+A: Verify service is active on blockchain explorer and price is competitive
 
-**No Orders Processing**
-- Confirm service is active: Check blockchain explorer
-- Verify service price matches market expectations
+**Q: How to change service price?**  
+A: Restart worker with new `--price` parameter
+
+**Q: How to stop worker?**  
+A: Press `Ctrl+C` to see processing statistics and gracefully exit
 
 ## Project Structure
 
 ```
 darvin_inferencer/
 ├── abi/
-│   └── inferencer_manager.json  # Contract ABI
-├── inferencer_worker.py         # Main worker script
-├── model_utils.py               # Model download utilities
-├── requirements.txt             # Dependencies
-└── README.md                    # This file
+│   └── inferencer_manager.json    # Contract ABI
+├── inferencer_worker.py           # Main worker
+├── model_utils.py                 # Model download utilities
+├── inference.py                   # Inference engine
+├── requirements.txt               # Dependencies
+└── README.md                      # This file
 ```
-
-## Model Download & Caching
-
-The `download_model()` function automatically:
-1. Checks if model is already cached (by CID)
-2. If cached, returns cached path immediately
-3. If not cached, authenticates and downloads from API server
-4. Extracts and caches model for future use
-
-Example usage in your inference code:
-```python
-from model_utils import download_model
-
-# Download model (auto-login and caching handled internally)
-model_dir = download_model(model_cid, private_key, api_server_url)
-if model_dir:
-    # Run your inference
-    result = run_inference(model_dir, input_data)
-```
-
-**Cache Location**: Models are cached in system temp directory under `darvin_models/`. Each model is identified by its CID, so the same model is only downloaded once.
 
 ## Security
 
-- ⚠️ Never commit private keys to git
+- ⚠️ Never commit private keys to version control
 - ✅ Use environment variables for secrets
 - ✅ Rotate keys regularly
 - ✅ Monitor transaction activity
-
-## License
-
-[Add your license]
-
-## Support
-
-For issues and questions, please contact [add contact info].
