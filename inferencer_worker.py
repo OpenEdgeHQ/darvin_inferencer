@@ -21,6 +21,7 @@ Environment Variables:
     MODEL_CID: Model IPFS CID (required)
     PRICE: Price per call in tokens (required)
     SYSTEM_PROMPT: System prompt for model (optional, default: translation)
+    MAX_NEW_TOKENS: Maximum tokens to generate (optional, default: 4096)
     INTERVAL: Polling interval in seconds (optional, default: 3)
     RPC_URL: Blockchain RPC endpoint (optional)
     CONTRACT_ADDRESS: InferencerManager contract address (optional)
@@ -360,14 +361,40 @@ def fulfill_order(
     try:
         account = w3.eth.account.from_key(private_key)
         
+        # Log result size for debugging
+        result_size_kb = len(result_bytes) / 1024
+        logger.info(f"[Order {order_id}] Result size: {result_size_kb:.2f} KB ({len(result_bytes)} bytes)")
+        
+        # Check if result is too large (Ethereum transaction limit ~128KB)
+        # Reserve some space for transaction overhead (~10KB)
+        max_result_size = 118 * 1024  # ~118KB
+        if len(result_bytes) > max_result_size:
+            logger.warning(
+                f"[Order {order_id}] Result size ({result_size_kb:.2f} KB) exceeds recommended limit "
+                f"({max_result_size/1024:.2f} KB). Transaction may fail."
+            )
+        
         tx_options = {"from": account.address}
         tx_options.update(build_fee_fields(w3))
         
         gas_estimate = contract.functions.asyncfulfillService(
             order_id, result_bytes
         ).estimate_gas(tx_options)
-        tx_options["gas"] = int(gas_estimate * 1.1)
+        
+        # Check gas limit (Ethereum block gas limit is typically 30M)
+        max_gas_limit = 30_000_000
+        estimated_gas = int(gas_estimate * 1.1)
+        if estimated_gas > max_gas_limit:
+            logger.error(
+                f"[Order {order_id}] Estimated gas ({estimated_gas:,}) exceeds block limit "
+                f"({max_gas_limit:,}). Transaction will fail."
+            )
+            return False
+        
+        tx_options["gas"] = estimated_gas
         tx_options["nonce"] = w3.eth.get_transaction_count(account.address)
+        
+        logger.info(f"[Order {order_id}] Estimated gas: {estimated_gas:,}")
         
         tx = contract.functions.asyncfulfillService(
             order_id, result_bytes
@@ -487,6 +514,7 @@ def main() -> None:
     model_cid = os.getenv("MODEL_CID")
     price_str = os.getenv("PRICE")
     system_prompt = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant that translates English text to Chinese.")
+    max_new_tokens = int(os.getenv("MAX_NEW_TOKENS", "65536"))
     interval = int(os.getenv("INTERVAL", "1"))
     
     # Validate required parameters
@@ -514,6 +542,7 @@ def main() -> None:
     logger.info(f"Model CID: {model_cid}")
     logger.info(f"Price: {price} tokens/call")
     logger.info(f"System Prompt: {system_prompt}")
+    logger.info(f"Max New Tokens: {max_new_tokens}")
     logger.info(f"Polling interval: {interval}s")
     
     try:
@@ -540,6 +569,7 @@ def main() -> None:
         model_inference = ModelInference(
             model_path=model_dir,
             system_prompt=system_prompt,
+            max_new_tokens=max_new_tokens,
         )
         logger.info("Model ready for inference")
         

@@ -102,10 +102,7 @@ Models are automatically cached at `/tmp/darvin_models/{CID}/`:
 A: Check logs for `Service registered: Service ID xxx`
 
 **Q: Orders not processing?**  
-A: Verify service is active on blockchain explorer and price is competitive
-
-**Q: How to change service price?**  
-A: Restart worker with new `--price` parameter
+A: Verify service is active on blockchain explorer
 
 **Q: How to stop worker?**  
 A: Press `Ctrl+C` to see processing statistics and gracefully exit
