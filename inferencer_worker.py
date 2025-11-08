@@ -6,18 +6,25 @@ An automated inference worker that:
 
 Prerequisites:
 - Python 3.8+
-- Set INFERENCER_PRIVATE_KEY environment variable
+- Set required environment variables
 
 Usage:
-    python inferencer_worker.py \
-        --model-id 1 \
-        --model-cid QmExample123... \
-        --price 0.001
+    export INFERENCER_PRIVATE_KEY="0x..."
+    export MODEL_ID="1"
+    export MODEL_CID="QmExample123..."
+    export PRICE="0.001"
+    python inferencer_worker.py
 
 Environment Variables:
     INFERENCER_PRIVATE_KEY: Your private key (required)
+    MODEL_ID: Whitelisted model ID (required)
+    MODEL_CID: Model IPFS CID (required)
+    PRICE: Price per call in tokens (required)
+    SYSTEM_PROMPT: System prompt for model (optional, default: translation)
+    INTERVAL: Polling interval in seconds (optional, default: 3)
     RPC_URL: Blockchain RPC endpoint (optional)
     CONTRACT_ADDRESS: InferencerManager contract address (optional)
+    API_SERVER_URL: API server URL (optional)
 """
 
 from __future__ import annotations
@@ -38,6 +45,7 @@ import click
 from web3 import Web3
 
 from model_utils import download_model
+from inference import ModelInference
 
 
 # ============================================================================
@@ -383,12 +391,34 @@ def fulfill_order(
         return False
 
 
+def parse_order_input(input_bytes: bytes) -> str:
+    """Parse order input from bytes to prompt string.
+    
+    Expected JSON format: {"prompt": "Your custom prompt here"}
+    or raw text
+    
+    Args:
+        input_bytes: Input bytes from order
+        
+    Returns:
+        Prompt string
+    """
+    try:
+        input_str = input_bytes.decode('utf-8')
+        input_data = json.loads(input_str)
+        # Try to get prompt field first, fallback to raw text
+        return input_data.get("prompt", input_str)
+    except Exception:
+        # Not JSON, treat as raw prompt
+        return input_bytes.decode('utf-8', errors='ignore')
+
+
 def process_new_orders(
     w3: Web3,
     contract,
     private_key: str,
     service_id: int,
-    model_cid: str,
+    model_inference: ModelInference,
     processed_orders: Set[int],
 ) -> int:
     """Process new orders. Returns count of processed orders."""
@@ -415,20 +445,22 @@ def process_new_orders(
         logger.info(f"  Time: {created_at}")
         logger.info(f"  Input: {inputs_display}")
         
-        # TODO: Replace with actual model inference
-        # For now, echo the input
-        # 
-        # Example workflow:
-        # 1. Download model (auto-login handled internally)
-        # model_dir = download_model(model_cid, private_key, default_api_server_url())
-        # if not model_dir:
-        #     logger.error(f"[Order {order_id}] Failed to download model")
-        #     continue
-        #
-        # 2. Run inference with model
-        # result_bytes = run_inference(model_dir, order.inputs)
-        
-        result_bytes = order.inputs if isinstance(order.inputs, (bytes, bytearray)) else b""
+        try:
+            # Parse input to get prompt
+            prompt = parse_order_input(order.inputs)
+            logger.info(f"  Prompt: {prompt[:100]}..." if len(prompt) > 100 else f"  Prompt: {prompt}")
+            
+            # Run inference
+            result = model_inference.generate(prompt)
+            logger.info(f"  Result: {result[:100]}..." if len(result) > 100 else f"  Result: {result}")
+            
+            # Encode result
+            result_bytes = result.encode('utf-8')
+            
+        except Exception as exc:
+            logger.error(f"[Order {order_id}] Inference error: {exc}")
+            # Fallback to echo mode on error
+            result_bytes = order.inputs if isinstance(order.inputs, (bytes, bytearray)) else b""
         
         # Fulfill order
         success = fulfill_order(w3, contract, private_key, order_id, result_bytes)
@@ -447,12 +479,33 @@ def process_new_orders(
 # ============================================================================
 
 @click.command()
-@click.option("--model-id", type=int, required=True, help="Model ID from whitelist")
-@click.option("--model-cid", required=True, help="Model CID for downloading")
-@click.option("--price", type=float, required=True, help="Price per call in tokens (e.g., 0.001)")
-@click.option("--interval", type=int, default=3, show_default=True, help="Polling interval in seconds")
-def main(model_id: int, model_cid: str, price: float, interval: int) -> None:
+def main() -> None:
     """Darvin Inferencer Worker - Auto-registers and processes orders."""
+    
+    # Read from environment variables
+    model_id = os.getenv("MODEL_ID")
+    model_cid = os.getenv("MODEL_CID")
+    price_str = os.getenv("PRICE")
+    system_prompt = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant that translates English text to Chinese.")
+    interval = int(os.getenv("INTERVAL", "1"))
+    
+    # Validate required parameters
+    if not model_id:
+        logger.error("MODEL_ID environment variable is required")
+        sys.exit(1)
+    if not model_cid:
+        logger.error("MODEL_CID environment variable is required")
+        sys.exit(1)
+    if not price_str:
+        logger.error("PRICE environment variable is required")
+        sys.exit(1)
+    
+    try:
+        model_id = int(model_id)
+        price = float(price_str)
+    except ValueError as e:
+        logger.error(f"Invalid parameter format: {e}")
+        sys.exit(1)
     
     logger.info("=" * 60)
     logger.info("Darvin Inferencer Worker Starting")
@@ -460,6 +513,7 @@ def main(model_id: int, model_cid: str, price: float, interval: int) -> None:
     logger.info(f"Model ID: {model_id}")
     logger.info(f"Model CID: {model_cid}")
     logger.info(f"Price: {price} tokens/call")
+    logger.info(f"System Prompt: {system_prompt}")
     logger.info(f"Polling interval: {interval}s")
     
     try:
@@ -475,6 +529,20 @@ def main(model_id: int, model_cid: str, price: float, interval: int) -> None:
         logger.info("Checking registration...")
         service_id = ensure_registration(w3, contract, private_key, model_id, price)
         
+        # Download and load model
+        logger.info(f"Preparing model (CID: {model_cid})...")
+        model_dir = download_model(model_cid, private_key, default_api_server_url())
+        if not model_dir:
+            logger.error("Failed to download model")
+            sys.exit(1)
+        
+        logger.info("Initializing model inference...")
+        model_inference = ModelInference(
+            model_path=model_dir,
+            system_prompt=system_prompt,
+        )
+        logger.info("Model ready for inference")
+        
         # Start monitoring
         logger.info(f"Monitoring orders for Service ID {service_id}...")
         logger.info("Press Ctrl+C to stop")
@@ -487,7 +555,7 @@ def main(model_id: int, model_cid: str, price: float, interval: int) -> None:
             
             try:
                 new_count = process_new_orders(
-                    w3, contract, private_key, service_id, model_cid, processed_orders
+                    w3, contract, private_key, service_id, model_inference, processed_orders
                 )
                 
                 if new_count > 0:
