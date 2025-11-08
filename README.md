@@ -14,7 +14,7 @@ pip install -r requirements.txt
 export INFERENCER_PRIVATE_KEY="your_private_key"
 export MODEL_ID="1"
 export MODEL_CID="QmYourModelCID"
-export PRICE="0.001"
+export PRICE="1"
 ```
 
 ### 3. Run Worker
