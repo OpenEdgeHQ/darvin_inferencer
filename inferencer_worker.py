@@ -73,16 +73,37 @@ logger = logging.getLogger(__name__)
 DEFAULT_DEVICE_DESCRIPTION = "Darvin Inference Node"
 
 
+def _resolve_chain_env() -> str:
+    raw = (os.getenv("DARVIN_CHAIN_ENV") or "prod").strip().lower()
+    if raw == "prod":
+        return "prod"
+    return "test"
+
+
+_ENV_PRESETS = {
+    "test": {
+        "contract_address": "0x3ff54294A0a78BD21cc6aDE9Af0363B1Bb0E64Fc",
+        "api_server_url": "https://darvin-backend-test.gradient.network",
+    },
+    "prod": {
+        "contract_address": "0x332F548d8E77eFD82F798736ED3a28b2A8b4CAFD",
+        "api_server_url": "https://darvin-api.originlabs.cc",
+    },
+}
+
+
 def default_rpc_url() -> str:
     return os.getenv("RPC_URL", "http://43.143.212.26:8545")
 
 
 def default_contract_address() -> str:
-    return os.getenv("CONTRACT_ADDRESS", "0x3ff54294A0a78BD21cc6aDE9Af0363B1Bb0E64Fc")
+    env = _resolve_chain_env()
+    return os.getenv("CONTRACT_ADDRESS", _ENV_PRESETS[env]["contract_address"])
 
 
 def default_api_server_url() -> str:
-    return os.getenv("API_SERVER_URL", "https://darvin-backend-test.gradient.network")
+    env = _resolve_chain_env()
+    return os.getenv("API_SERVER_URL", _ENV_PRESETS[env]["api_server_url"])
 
 
 # ============================================================================
