@@ -25,7 +25,7 @@ class ModelInference:
         max_new_tokens: int = 4096,
         temperature: float = 0.0,
         top_p: float = 1.0,
-        gpu_memory_utilization: float = 0.9,
+        gpu_memory_utilization: float = 0.5,
         dtype: str = "auto",
     ) -> None:
         """Initialize model inference.
